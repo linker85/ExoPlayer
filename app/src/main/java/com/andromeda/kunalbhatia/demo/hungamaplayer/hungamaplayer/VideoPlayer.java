@@ -6,7 +6,11 @@ import android.os.Bundle;
 import android.os.Handler;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.app.MediaRouteButton;
+import android.support.v7.widget.PopupMenu;
 import android.util.Log;
+import android.view.Menu;
+import android.view.MenuItem;
+import android.view.MotionEvent;
 import android.view.SurfaceView;
 import android.view.View;
 import android.widget.ImageButton;
@@ -19,10 +23,12 @@ import com.google.android.exoplayer.DummyTrackRenderer;
 import com.google.android.exoplayer.ExoPlaybackException;
 import com.google.android.exoplayer.ExoPlayer;
 import com.google.android.exoplayer.MediaCodecVideoTrackRenderer;
+import com.google.android.exoplayer.MediaFormat;
 import com.google.android.exoplayer.TrackRenderer;
 import com.google.android.exoplayer.chunk.Format;
 import com.google.android.exoplayer.hls.HlsSampleSource;
 import com.google.android.exoplayer.upstream.BandwidthMeter;
+import com.google.android.exoplayer.util.MimeTypes;
 import com.google.android.exoplayer.util.PlayerControl;
 import com.google.android.exoplayer.util.Util;
 import com.google.android.gms.cast.MediaInfo;
@@ -39,14 +45,14 @@ import java.util.concurrent.TimeUnit;
 
 /*
 * Just display HLS video surface view
-* Implementing play/pause, next, previous, forward 30 sec and reverse 30 sec, mp4, currentTrackIndex
+* Implementing  lock/unlock feature, hide or show controls depending on time interval, fetching qualities from a hls video
 * */
 public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.EventListener, View.OnClickListener {
 
     private static final String TAG = "VideoPlayer";
 
     public static final int RENDERER_COUNT = 2;
-    public static final int TYPE_AUDIO = 1;
+    public static final int TYPE_AUDIO     = 1;
     private ExoPlayer player;
     private SurfaceView surface;
     private String[] video_url, video_type, video_title;
@@ -54,13 +60,13 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
     private Handler mainHandler;
     private HpLib_RendererBuilder hpLibRendererBuilder;
     private TrackRenderer videoRenderer;
-    private LinearLayout root;
+    private LinearLayout root, unlock_panel;
     public static final int TYPE_VIDEO = 0;
 
     private View decorView;
     private int uiImmersiveOptions;
     private RelativeLayout loadingPanel;
-    private Runnable updatePlayer;
+    private Runnable updatePlayer, hideControls;
 
     //Implementing the top bar
     private ImageButton btn_back;
@@ -77,17 +83,33 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
     //Implementing current time, total time and seekbar
     private TextView txt_ct,txt_td;
     private SeekBar seekBar;
+    // For the player controls feature
     private PlayerControl playerControl;
     public enum PlaybackState {
         PLAYING, PAUSED, BUFFERING, IDLE
     }
 
+    // For the lock and unlock feature
+    public enum ControlsMode {
+        LOCK, FULLCONTORLS
+    }
+    private ControlsMode controlsState;
+
+
+    // Player buttons
     private ImageButton btn_play;
     private ImageButton btn_pause;
     private ImageButton btn_fwd;
     private ImageButton btn_rev;
     private ImageButton btn_next;
     private ImageButton btn_prev;
+
+    // Lock/Unlock buttons
+    private ImageButton btn_lock;
+    private ImageButton btn_unlock;
+
+    // Settings button
+    private ImageButton btn_settings;
 
     // Session manager for the chrome cast
     private final SessionManagerListener<CastSession> mSessionManagerListener = new SessionManagerListenerImpl();
@@ -279,6 +301,64 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
             }
         };
     }
+    {
+        // We need a thread to be able to hide the control
+        hideControls = new Runnable() {
+            @Override
+            public void run() {
+                hideAllControls();
+            }
+        };
+    }
+
+    private void hideAllControls() {
+        // Depending on the controlState I lock or unlock
+        if (controlsState == ControlsMode.FULLCONTORLS) {
+            // Hide controls
+            if(root.getVisibility()==View.VISIBLE) {
+                root.setVisibility(View.GONE);
+            }
+        } else if (controlsState == ControlsMode.LOCK) {
+            // Hide unlock panel
+            if (unlock_panel.getVisibility() == View.VISIBLE) {
+                unlock_panel.setVisibility(View.GONE);
+            }
+        }
+        // Hide Android bars
+        decorView.setSystemUiVisibility(uiImmersiveOptions);
+    }
+    private void showControls() {
+        // Depending on the controlState
+        if (controlsState == ControlsMode.FULLCONTORLS) {
+            // Show controls
+            if(root.getVisibility() == View.GONE){
+                root.setVisibility(View.VISIBLE);
+            }
+        } else if (controlsState == ControlsMode.LOCK) {
+            // Show unlock panel
+            if(unlock_panel.getVisibility() == View.GONE) {
+                unlock_panel.setVisibility(View.VISIBLE);
+            }
+        }
+        // Remove previous callbacks to the hideControls
+        mainHandler.removeCallbacks(hideControls);
+        // Re-init new callback to hide controls after 3 seconds of no activity
+        mainHandler.postDelayed(hideControls, 3000);
+    }
+
+    /*
+    * User is watching the video, after sometime the controls get hidden.
+    * If controls are hidden and user wants to pause the video, user touches screen after releasing the touch the controls reappear
+    * */
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        switch (event.getAction()){
+            case MotionEvent.ACTION_UP:
+                showControls();
+                break;
+        }
+        return super.onTouchEvent(event);
+    }
 
     // Top bar (Back button, video title, chrome cast) and Seekbar (Current duration, total duration)
     @Override
@@ -347,6 +427,11 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
         btn_prev  = (ImageButton) findViewById(R.id.btn_prev);
         btn_next  = (ImageButton) findViewById(R.id.btn_next);
 
+        btn_lock = (ImageButton) findViewById(R.id.btn_lock);
+        btn_unlock = (ImageButton) findViewById(R.id.btn_unlock);
+
+        btn_settings = (ImageButton) findViewById(R.id.btn_settings);
+
         // Listeners
         btn_back.setOnClickListener(this);
         btn_play.setOnClickListener(this);
@@ -355,6 +440,14 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
         btn_rev.setOnClickListener(this);
         btn_prev.setOnClickListener(this);
         btn_next.setOnClickListener(this);
+
+        btn_lock.setOnClickListener(this);
+        btn_unlock.setOnClickListener(this);
+
+        btn_settings.setOnClickListener(this);
+
+        // Unlock panel
+        unlock_panel = (LinearLayout) findViewById(R.id.unlock_panel);
 
         txt_title = (TextView) findViewById(R.id.txt_title);
 
@@ -402,6 +495,8 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
             loadingPanel.setVisibility(View.VISIBLE);
             // Init runnable every 200 ms
             mainHandler.postDelayed(updatePlayer, 200);
+            mainHandler.postDelayed(hideControls, 3000);
+            controlsState = ControlsMode.FULLCONTORLS;
         }
     }
 
@@ -450,6 +545,73 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
             currentTrackIndex--;
             // Create new instance of the player, download and play
             execute();
+        }
+        // If lock was pressed -> hide controls, allow to unlock
+        if (i1 == R.id.btn_lock) {
+            controlsState = ControlsMode.LOCK;
+            root.setVisibility(View.GONE);
+            unlock_panel.setVisibility(View.VISIBLE);
+        }
+        // If unlock was pressed -> show controls, allow to lock
+        if (i1 == R.id.btn_unlock) {
+            controlsState = ControlsMode.FULLCONTORLS;
+            root.setVisibility(View.VISIBLE);
+            unlock_panel.setVisibility(View.GONE);
+        }
+        // Click on settings: Select quality of HLS
+        if (i1 == R.id.btn_settings) {
+            // Show popup
+            PopupMenu popup = new PopupMenu(VideoPlayer.this, v);
+            // If user clicks on a menu item
+            popup.setOnMenuItemClickListener(new PopupMenu.OnMenuItemClickListener() {
+                @Override
+                public boolean onMenuItemClick(MenuItem item) {
+                    /**
+                     * Selects a track for the specified renderer.
+                     *
+                     * @param rendererIndex The index of the renderer.
+                     * @param trackIndex The index of the track. A negative value or a value greater than or equal to
+                     *     the renderer's track count will disable the renderer.
+                     */
+                    // Changes the quality
+                    player.setSelectedTrack(0, (item.getItemId() - 1));
+                    return false;
+                }
+            });
+            // Menu inside the popup
+            Menu menu = popup.getMenu();
+            // Add items inside the menu
+            menu.add(Menu.NONE, 0, 0, "Video Quality");
+            for (int i = 0; i < player.getTrackCount(0); i++) {
+                // Get the qualities from the video
+                /**
+                 * Returns the format of a track.
+                 *
+                 * @param rendererIndex The index of the renderer.
+                 * @param trackIndex The index of the track.
+                 * @return The format of the track.
+                 */
+                MediaFormat format = player.getTrackFormat(0, i);
+                if (MimeTypes.isVideo(format.mimeType)) {
+                    /**
+                     * Whether the format represents an adaptive track, meaning that the format of the actual media
+                     * data may change (e.g. to adapt to network conditions).
+                     */
+                    if (format.adaptive) {
+                        menu.add(1, (i + 1), (i + 1), "Auto");
+                    } else {
+                        /**
+                         * The width of the video in pixels, or {@link #NO_VALUE} if unknown or not applicable.
+                         */
+                        menu.add(1, (i + 1), (i + 1), format.width + "p");
+                    }
+                }
+            }
+            menu.setGroupCheckable(1, true, true);
+            // Select the first item
+            menu.findItem((player.getSelectedTrack(0) + 1)).setChecked(true);
+            // Show popup
+            popup.show();
         }
     }
 
