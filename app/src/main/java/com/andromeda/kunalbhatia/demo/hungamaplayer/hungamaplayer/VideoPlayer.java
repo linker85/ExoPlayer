@@ -3,9 +3,11 @@ package com.andromeda.kunalbhatia.demo.hungamaplayer.hungamaplayer;
 import android.os.Bundle;
 import android.os.Handler;
 import android.support.v7.app.AppCompatActivity;
+import android.util.Log;
 import android.view.SurfaceView;
 import android.view.View;
 import android.widget.LinearLayout;
+import android.widget.RelativeLayout;
 
 import com.google.android.exoplayer.DummyTrackRenderer;
 import com.google.android.exoplayer.ExoPlaybackException;
@@ -38,11 +40,64 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
     private LinearLayout root;
     public static final int TYPE_VIDEO = 0;
 
+    private View decorView;
+    private int uiImmersiveOptions;
+    private RelativeLayout loadingPanel;
+    private Runnable updatePlayer;
 
+    {
+        /*
+        * Show or hide the loadingPanel, depending on the state of the video
+        * */
+        updatePlayer = new Runnable() {
+            @Override
+            public void run() {
+                switch (player.getPlaybackState()) {
+                    case ExoPlayer.STATE_BUFFERING:
+                        loadingPanel.setVisibility(View.VISIBLE);
+                        break;
+                    case ExoPlayer.STATE_ENDED:
+                        finish();
+                        break;
+                    case ExoPlayer.STATE_IDLE:
+                        loadingPanel.setVisibility(View.GONE);
+                        break;
+                    case ExoPlayer.STATE_PREPARING:
+                        loadingPanel.setVisibility(View.VISIBLE);
+                        break;
+                    case ExoPlayer.STATE_READY:
+                        loadingPanel.setVisibility(View.GONE);
+                        break;
+                    default:
+                        break;
+                }
+                // Updates player every 200 ms
+                mainHandler.postDelayed(updatePlayer, 200);
+            }
+        };
+    }
+
+    // Hide bars, show preloader, stop video on back press
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_video_player);
+
+        // This bars appears at the beggining, if there is no activity; these bars get hidden
+        uiImmersiveOptions = (View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_LAYOUT_STABLE
+                | View.SYSTEM_UI_FLAG_LOW_PROFILE
+                | View.SYSTEM_UI_FLAG_FULLSCREEN
+                | View.SYSTEM_UI_FLAG_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
+                | View.SYSTEM_UI_FLAG_IMMERSIVE_STICKY
+        );
+        // We get the current decorview
+        decorView = getWindow().getDecorView();
+        // Based on the flags and the decor view we see if we need to hide or show the bars
+        decorView.setSystemUiVisibility(uiImmersiveOptions);
+        // Get reference to the load panel
+        loadingPanel = (RelativeLayout) findViewById(R.id.loadingVPanel);
 
         root = (LinearLayout) findViewById(R.id.root);
         root.setVisibility(View.GONE);
@@ -67,6 +122,10 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
             hpLibRendererBuilder = getHpLibRendererBuilder();
             // the builder calls AsyncRendererBuilder
             hpLibRendererBuilder.buildRenderers(this);
+            // Show loading panel at the beginning
+            loadingPanel.setVisibility(View.VISIBLE);
+            // Init runnable every 200 ms
+            mainHandler.postDelayed(updatePlayer, 200);
         }
     }
 
@@ -107,6 +166,7 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
 
     // Puts the video on the surface
     private void pushSurface(boolean blockForSurfacePush) {
+        Log.d(TAG, "Thread_pushSurface: " + Thread.currentThread());
         if (videoRenderer == null) {return;}
         if (blockForSurfacePush) {
             /**
@@ -133,6 +193,20 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
             player.sendMessage(
                     videoRenderer, MediaCodecVideoTrackRenderer.MSG_SET_SURFACE, surface.getHolder().getSurface());
         }
+    }
+
+    // Kills player
+    private void killPlayer(){
+        if (player != null) {
+            player.release();
+        }
+    }
+
+    // Kills player after activity has been closed
+    @Override
+    public void onBackPressed() {
+        super.onBackPressed();
+        killPlayer();
     }
 
     @Override
