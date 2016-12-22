@@ -164,8 +164,8 @@ public class HpLib_HlsHpLibRendererBuilder implements HpLib_RendererBuilder {
                     MediaCodecSelector.DEFAULT);
 
             TrackRenderer[] renderers = new TrackRenderer[2];
-            renderers[0] = videoRenderer;
-            renderers[1] = audioRenderer;
+            renderers[VideoPlayer.TYPE_VIDEO] = videoRenderer;
+            renderers[VideoPlayer.TYPE_AUDIO] = audioRenderer;
             //renderers[2] = textRenderer;
             // Plays the video
             player.onRenderers(renderers, bandwidthMeter);

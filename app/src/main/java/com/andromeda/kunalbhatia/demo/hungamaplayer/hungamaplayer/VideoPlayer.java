@@ -1,6 +1,7 @@
 package com.andromeda.kunalbhatia.demo.hungamaplayer.hungamaplayer;
 
 import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.support.v7.app.AppCompatActivity;
@@ -38,7 +39,7 @@ import java.util.concurrent.TimeUnit;
 
 /*
 * Just display HLS video surface view
-*
+* Implementing play/pause, next, previous, forward 30 sec and reverse 30 sec, mp4, currentTrackIndex
 * */
 public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.EventListener, View.OnClickListener {
 
@@ -48,7 +49,8 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
     public static final int TYPE_AUDIO = 1;
     private ExoPlayer player;
     private SurfaceView surface;
-    private String video_url, video_type, video_title;
+    private String[] video_url, video_type, video_title;
+    private int currentTrackIndex;
     private Handler mainHandler;
     private HpLib_RendererBuilder hpLibRendererBuilder;
     private TrackRenderer videoRenderer;
@@ -79,6 +81,13 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
     public enum PlaybackState {
         PLAYING, PAUSED, BUFFERING, IDLE
     }
+
+    private ImageButton btn_play;
+    private ImageButton btn_pause;
+    private ImageButton btn_fwd;
+    private ImageButton btn_rev;
+    private ImageButton btn_next;
+    private ImageButton btn_prev;
 
     // Session manager for the chrome cast
     private final SessionManagerListener<CastSession> mSessionManagerListener = new SessionManagerListenerImpl();
@@ -144,9 +153,9 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
         MediaMetadata movieMetadata = new MediaMetadata(MediaMetadata.MEDIA_TYPE_MOVIE);
 
         mSelectedMedia = new MediaItem();
-        mSelectedMedia.setUrl(video_url);
-        mSelectedMedia.setContentType(video_type);
-        mSelectedMedia.setTitle(video_title);
+        mSelectedMedia.setUrl(video_url[currentTrackIndex]);
+        mSelectedMedia.setContentType(video_type[currentTrackIndex]);
+        mSelectedMedia.setTitle(video_title[currentTrackIndex]);
 
         movieMetadata.putString(MediaMetadata.KEY_TITLE, mSelectedMedia.getTitle());
 
@@ -329,8 +338,23 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
             }
         });
 
-        btn_back = (ImageButton) findViewById(R.id.btn_back);
+        // Buttons
+        btn_back  = (ImageButton) findViewById(R.id.btn_back);
+        btn_play  = (ImageButton) findViewById(R.id.btn_play);
+        btn_pause = (ImageButton) findViewById(R.id.btn_pause);
+        btn_fwd   = (ImageButton) findViewById(R.id.btn_fwd);
+        btn_rev   = (ImageButton) findViewById(R.id.btn_rev);
+        btn_prev  = (ImageButton) findViewById(R.id.btn_prev);
+        btn_next  = (ImageButton) findViewById(R.id.btn_next);
+
+        // Listeners
         btn_back.setOnClickListener(this);
+        btn_play.setOnClickListener(this);
+        btn_pause.setOnClickListener(this);
+        btn_fwd.setOnClickListener(this);
+        btn_rev.setOnClickListener(this);
+        btn_prev.setOnClickListener(this);
+        btn_next.setOnClickListener(this);
 
         txt_title = (TextView) findViewById(R.id.txt_title);
 
@@ -340,13 +364,15 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
         // Reference to the surface where we display the video
         surface = (SurfaceView) findViewById(R.id.surface_view);
 
+        currentTrackIndex = 0;
+
         // Type of video
-        video_type = "hls";
+        video_type = new String[]{"hls", "others"};
         // Video url
-        video_url =  "http://playertest.longtailvideo.com/adaptive/bbbfull/bbbfull.m3u8";
+        video_url = new String[]{"http://playertest.longtailvideo.com/adaptive/bbbfull/bbbfull.m3u8","http://player.hungama.com/mp3/91508493.mp4"};
         // Set video title
-        video_title = "Big Buck Bunny";
-        txt_title.setText(video_title);
+        video_title = new String[]{"Big Buck Bunny","Movie Trailer"};
+        txt_title.setText(video_title[currentTrackIndex]);
 
         // To display the video we will need a handler
         mainHandler = new Handler();
@@ -356,7 +382,18 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
 
     private void execute() {
         // RENDERER_COUNT = 2 -> audio and video
-        player = ExoPlayer.Factory.newInstance(RENDERER_COUNT);
+        player        = ExoPlayer.Factory.newInstance(RENDERER_COUNT);
+        // Add the player to the control
+        playerControl = new PlayerControl(player);
+        // Manipulate the currenTrackIndex
+        if (currentTrackIndex >= video_title.length) {
+            currentTrackIndex = (video_title.length-1);
+        } else if(currentTrackIndex <= 0) {
+            currentTrackIndex = 0;
+        }
+        // Update the title
+        txt_title.setText(video_title[currentTrackIndex]);
+
         if (player != null) {
             hpLibRendererBuilder = getHpLibRendererBuilder();
             // the builder calls AsyncRendererBuilder
@@ -376,18 +413,60 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
             killPlayer();
             finish();
         }
+        // If pause was pressed
+        if (i1 == R.id.btn_pause) {
+            if (playerControl.isPlaying()) {
+                playerControl.pause();
+                btn_pause.setVisibility(View.GONE);
+                btn_play.setVisibility(View.VISIBLE);
+            }
+        }
+        // If play was pressed
+        if (i1 == R.id.btn_play) {
+            if (!playerControl.isPlaying()) {
+                playerControl.start();
+                btn_pause.setVisibility(View.VISIBLE);
+                btn_play.setVisibility(View.GONE);
+            }
+        }
+        // If forward was pressed
+        if (i1 == R.id.btn_fwd) {
+            player.seekTo(player.getCurrentPosition() + 30000);
+        }
+        // If rewind was pressed
+        if (i1 == R.id.btn_rev) {
+            player.seekTo(player.getCurrentPosition() - 30000);
+        }
+        // If next was pressed
+        if (i1 == R.id.btn_next) {
+            player.release();
+            currentTrackIndex++;
+            // Create new instance of the player, download and play
+            execute();
+        }
+        // If previous was pressed
+        if (i1 == R.id.btn_prev) {
+            player.release();
+            currentTrackIndex--;
+            // Create new instance of the player, download and play
+            execute();
+        }
     }
 
     private HpLib_RendererBuilder getHpLibRendererBuilder() {
         // Fill user agent
         String userAgent = Util.getUserAgent(this, "HpLib");
         // So we can support various types of video
-        switch (video_type){
+        // Search type according to the current track
+        switch (video_type[currentTrackIndex]){
             case "hls":
-                // activity, user_agent (required for hls) and video_url
-                return new HpLib_HlsHpLibRendererBuilder(this, userAgent, video_url);
+                // Context, user_agent (required for hls) and video_url
+                return new HpLib_HlsHpLibRendererBuilder(this, userAgent, video_url[currentTrackIndex]);
+            case "others":
+                // Context, user_agent (required for hls) and video_url
+                return new HpLib_ExtractorHpLibRendererBuilder(this, userAgent, Uri.parse(video_url[currentTrackIndex]));
             default:
-                throw new IllegalStateException("Unsupported type: " + video_url);
+                throw new IllegalStateException("Unsupported type: " + video_url[currentTrackIndex]);
         }
     }
 
