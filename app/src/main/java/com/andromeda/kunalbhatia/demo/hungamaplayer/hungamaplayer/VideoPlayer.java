@@ -56,7 +56,7 @@ import java.util.concurrent.TimeUnit;
 
 /*
 * Just display HLS video surface view
-* Screen touch swipes, swipes will control brightness and volume
+* Screen touch swipes, swipes will control video position, either reverse or forward
 * */
 public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.EventListener, View.OnClickListener {
 
@@ -71,7 +71,7 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
     private Handler mainHandler;
     private HpLib_RendererBuilder hpLibRendererBuilder;
     private TrackRenderer videoRenderer;
-    private LinearLayout root, unlock_panel;
+    private LinearLayout root,top_controls, middle_panel, unlock_panel, bottom_controls, seekBar_center_text,onlySeekbar;
     public static final int TYPE_VIDEO = 0;
 
     private View decorView;
@@ -141,6 +141,7 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
     private AudioManager audioManager;
     private Display display;
     private Point size;
+    private double seekSpeed = 0;
 
     // Session manager for the chrome cast
     private final SessionManagerListener<CastSession> mSessionManagerListener = new SessionManagerListenerImpl();
@@ -410,6 +411,7 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
                     intBottom = false;
                     intTop = false;
                 }
+                seekSpeed = (TimeUnit.MILLISECONDS.toSeconds(player.getDuration()) * 0.1);
                 diffX = 0;
                 calculatedTime = 0;
                 seekDur = String.format("%02d:%02d",
@@ -521,8 +523,47 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
                             // Set new progress for the volume container
                             volumeBar.setProgress((int) volPerc);
                         }
-                    } else {
+                    } else if (Math.abs(diffX) > Math.abs(diffY)) {
                         // Its horizontal movement
+                        // Swipes above max distance -> forward
+                        if (Math.abs(diffX) > (MIN_DISTANCE + 100)) {
+                            tested_ok = true;
+                            // Show and hide correspondent controls
+                            root.setVisibility(View.VISIBLE);
+                            seekBar_center_text.setVisibility(View.VISIBLE);
+                            onlySeekbar.setVisibility(View.VISIBLE);
+                            top_controls.setVisibility(View.GONE);
+                            bottom_controls.setVisibility(View.GONE);
+                            String totime = "";
+                            // Calculate time to forward
+                            calculatedTime = (int) ((diffX) * seekSpeed);
+                            // calculatedTime > 0 = forward
+                            if (calculatedTime > 0) {
+                                seekDur = String.format("[ +%02d:%02d ]",
+                                        TimeUnit.MILLISECONDS.toMinutes(calculatedTime) -
+                                                TimeUnit.HOURS.toMinutes(TimeUnit.MILLISECONDS.toHours(calculatedTime)),
+                                        TimeUnit.MILLISECONDS.toSeconds(calculatedTime) -
+                                                TimeUnit.MINUTES.toSeconds(TimeUnit.MILLISECONDS.toMinutes(calculatedTime)));
+                            } else if (calculatedTime < 0) {
+                                // calculatedTime < 0 = backward
+                                seekDur = String.format("[ -%02d:%02d ]",
+                                        Math.abs(TimeUnit.MILLISECONDS.toMinutes(calculatedTime) -
+                                                TimeUnit.HOURS.toMinutes(TimeUnit.MILLISECONDS.toHours(calculatedTime))),
+                                        Math.abs(TimeUnit.MILLISECONDS.toSeconds(calculatedTime) -
+                                                TimeUnit.MINUTES.toSeconds(TimeUnit.MILLISECONDS.toMinutes(calculatedTime))));
+                            }
+                            // Get new current time
+                            totime = String.format("%02d:%02d",
+                                    TimeUnit.MILLISECONDS.toMinutes(player.getCurrentPosition() + (calculatedTime)) -
+                                            TimeUnit.HOURS.toMinutes(TimeUnit.MILLISECONDS.toHours(player.getCurrentPosition() + (calculatedTime))), // The change is in this line
+                                    TimeUnit.MILLISECONDS.toSeconds(player.getCurrentPosition() + (calculatedTime)) -
+                                            TimeUnit.MINUTES.toSeconds(TimeUnit.MILLISECONDS.toMinutes(player.getCurrentPosition() + (calculatedTime))));
+                            // Display new time + time forwarded/backwarded
+                            txt_seek_secs.setText(seekDur);
+                            txt_seek_currTime.setText(totime);
+                            // Change seekbar progress
+                            seekBar.setProgress((int) (player.getCurrentPosition() + (calculatedTime)));
+                        }
                     }
                 }
                 break;
@@ -533,12 +574,22 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
                 screen_swipe_move = false;
                 tested_ok         = false;
 
+                // Seek bar and controls
+                seekBar_center_text.setVisibility(View.GONE);
+                onlySeekbar.setVisibility(View.VISIBLE);
+                top_controls.setVisibility(View.VISIBLE);
+                bottom_controls.setVisibility(View.VISIBLE);
+                root.setVisibility(View.VISIBLE);
+
                 // Hide volume and brigthness controls
                 brightness_center_text.setVisibility(View.GONE);
                 vol_center_text.setVisibility(View.GONE);
                 brightnessBarContainer.setVisibility(View.GONE);
                 volumeBarContainer.setVisibility(View.GONE);
 
+                // Get new time to forward or backward the video
+                calculatedTime = (int) (player.getCurrentPosition() + (calculatedTime));
+                player.seekTo(calculatedTime);
                 showControls();
                 break;
         }
@@ -626,11 +677,19 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
         btn_next  = (ImageButton) findViewById(R.id.btn_next);
 
         // Lock/Unlock button
-        btn_lock = (ImageButton) findViewById(R.id.btn_lock);
+        btn_lock   = (ImageButton) findViewById(R.id.btn_lock);
         btn_unlock = (ImageButton) findViewById(R.id.btn_unlock);
 
         // Settings button
         btn_settings = (ImageButton) findViewById(R.id.btn_settings);
+
+        // Seek bar and controls
+        txt_seek_secs       = (TextView) findViewById(R.id.txt_seek_secs);
+        txt_seek_currTime   = (TextView) findViewById(R.id.txt_seek_currTime);
+        seekBar_center_text = (LinearLayout) findViewById(R.id.seekbar_center_text);
+        onlySeekbar         = (LinearLayout) findViewById(R.id.seekbar_time);
+        top_controls        = (LinearLayout) findViewById(R.id.top);
+        bottom_controls     = (LinearLayout) findViewById(R.id.controls);
 
         // Volume and brigthness button
         vol_perc_center_text       = (TextView) findViewById(R.id.vol_perc_center_text);
