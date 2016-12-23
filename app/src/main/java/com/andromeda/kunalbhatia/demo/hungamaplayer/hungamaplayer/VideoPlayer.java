@@ -1,20 +1,31 @@
 package com.andromeda.kunalbhatia.demo.hungamaplayer.hungamaplayer;
 
+import android.content.ContentResolver;
+import android.content.Context;
 import android.content.Intent;
+import android.graphics.Point;
+import android.media.AudioManager;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
+import android.provider.Settings;
 import android.support.v7.app.AppCompatActivity;
 import android.support.v7.app.MediaRouteButton;
 import android.support.v7.widget.PopupMenu;
+import android.util.DisplayMetrics;
 import android.util.Log;
+import android.view.Display;
 import android.view.Menu;
 import android.view.MenuItem;
 import android.view.MotionEvent;
 import android.view.SurfaceView;
 import android.view.View;
+import android.view.Window;
+import android.view.WindowManager;
 import android.widget.ImageButton;
+import android.widget.ImageView;
 import android.widget.LinearLayout;
+import android.widget.ProgressBar;
 import android.widget.RelativeLayout;
 import android.widget.SeekBar;
 import android.widget.TextView;
@@ -45,7 +56,7 @@ import java.util.concurrent.TimeUnit;
 
 /*
 * Just display HLS video surface view
-* Implementing  lock/unlock feature, hide or show controls depending on time interval, fetching qualities from a hls video
+* Screen touch swipes, swipes will control brightness and volume
 * */
 public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.EventListener, View.OnClickListener {
 
@@ -95,7 +106,6 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
     }
     private ControlsMode controlsState;
 
-
     // Player buttons
     private ImageButton btn_play;
     private ImageButton btn_pause;
@@ -110,6 +120,27 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
 
     // Settings button
     private ImageButton btn_settings;
+
+    // Volume and brigthness controls
+    private Boolean tested_ok = false;
+    private int sWidth, sHeight;
+    private boolean immersiveMode, intLeft, intRight, intTop, intBottom, finLeft, finRight, finTop, finBottom;
+    private long diffX, diffY;
+    private int calculatedTime;
+    private String seekDur;
+    private float baseX, baseY;
+    private Boolean screen_swipe_move = false;
+    private static final int MIN_DISTANCE = 150;
+    private ContentResolver cResolver;
+    private Window window;
+    private int brightness, mediavolume, device_height, device_width;
+    private LinearLayout volumeBarContainer, brightnessBarContainer,brightness_center_text, vol_center_text;
+    private ProgressBar volumeBar, brightnessBar;
+    private ImageView volIcon, brightnessIcon, vol_image, brightness_image;
+    private TextView vol_perc_center_text, brigtness_perc_center_text,txt_seek_secs,txt_seek_currTime;
+    private AudioManager audioManager;
+    private Display display;
+    private Point size;
 
     // Session manager for the chrome cast
     private final SessionManagerListener<CastSession> mSessionManagerListener = new SessionManagerListenerImpl();
@@ -353,7 +384,161 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
     @Override
     public boolean onTouchEvent(MotionEvent event) {
         switch (event.getAction()){
+            // User touches the screen
+            case MotionEvent.ACTION_DOWN:
+                tested_ok = false;
+                // We pressed on the left
+                if (event.getX() < (sWidth / 2)) {
+                    intLeft = true;
+                    intRight = false;
+                    // We pressed on the right
+                } else if (event.getX() > (sWidth / 2)) {
+                    intLeft = false;
+                    intRight = true;
+                }
+                int upperLimit = (sHeight / 4) + 100;
+                int lowerLimit = ((sHeight / 4) * 3) - 150;
+                // We pressed on the top
+                if (event.getY() < upperLimit) {
+                    intBottom = false;
+                    intTop = true;
+                // We pressed in the bottom
+                } else if (event.getY() > lowerLimit) {
+                    intBottom = true;
+                    intTop = false;
+                } else {
+                    intBottom = false;
+                    intTop = false;
+                }
+                diffX = 0;
+                calculatedTime = 0;
+                seekDur = String.format("%02d:%02d",
+                        TimeUnit.MILLISECONDS.toMinutes(diffX) -
+                                TimeUnit.HOURS.toMinutes(TimeUnit.MILLISECONDS.toHours(diffX)),
+                        TimeUnit.MILLISECONDS.toSeconds(diffX) -
+                                TimeUnit.MINUTES.toSeconds(TimeUnit.MILLISECONDS.toMinutes(diffX)));
+
+                //TOUCH STARTED
+                baseX = event.getX();
+                baseY = event.getY();
+                break;
+            // User moves the finger
+            case MotionEvent.ACTION_MOVE:
+                // The finge is now moving
+                screen_swipe_move = true;
+                // Controls are currently visible
+                if (controlsState == ControlsMode.FULLCONTORLS) {
+                    // Dissapear controls while finger is moving
+                    root.setVisibility(View.GONE);
+                    diffX = (long) (Math.ceil(event.getX() - baseX));
+                    diffY = (long) Math.ceil(event.getY() - baseY);
+                    // Speed in which brightness can increase or deacrease
+                    double brightnessSpeed = 0.05;
+                    if (Math.abs(diffY) > MIN_DISTANCE) {
+                        tested_ok = true;
+                    }
+                    // Its vertical movement
+                    if (Math.abs(diffY) > Math.abs(diffX)) {
+                        // Tap in left increases/decreases brightness
+                        if (intLeft) {
+                            cResolver = getContentResolver();
+                            window    = getWindow();
+                            // Get the current brightness
+                            try {
+                                Settings.System.putInt(cResolver, Settings.System.SCREEN_BRIGHTNESS_MODE, Settings.System.SCREEN_BRIGHTNESS_MODE_MANUAL);
+                                brightness = Settings.System.getInt(cResolver, Settings.System.SCREEN_BRIGHTNESS);
+                            } catch (Settings.SettingNotFoundException e) {
+                                e.printStackTrace();
+                            }
+                            // Define new brightness
+                            int new_brightness = (int) (brightness - (diffY * brightnessSpeed));
+                            // Keep brightness in bounds
+                            if (new_brightness > 250) {
+                                new_brightness = 250;
+                            } else if (new_brightness < 1) {
+                                new_brightness = 1;
+                            }
+                            // Calculate brightness inside the bar container
+                            double brightPerc = Math.ceil((((double) new_brightness / (double) 250) * (double) 100));
+                            brightnessBarContainer.setVisibility(View.VISIBLE);
+                            brightness_center_text.setVisibility(View.VISIBLE);
+                            brightnessBar.setProgress((int) brightPerc);
+                            // Change brightness icons
+                            if (brightPerc < 30) {
+                                brightnessIcon.setImageResource(R.drawable.hplib_brightness_minimum);
+                                brightness_image.setImageResource(R.drawable.hplib_brightness_minimum);
+                            } else if (brightPerc > 30 && brightPerc < 80) {
+                                brightnessIcon.setImageResource(R.drawable.hplib_brightness_medium);
+                                brightness_image.setImageResource(R.drawable.hplib_brightness_medium);
+                            } else if (brightPerc > 80) {
+                                brightnessIcon.setImageResource(R.drawable.hplib_brightness_maximum);
+                                brightness_image.setImageResource(R.drawable.hplib_brightness_maximum);
+                            }
+                            // Set brightness text
+                            brigtness_perc_center_text.setText(" " + (int) brightPerc);
+
+                            // Set new brightness in the device
+                            Settings.System.putInt(cResolver, Settings.System.SCREEN_BRIGHTNESS, (new_brightness));
+                            WindowManager.LayoutParams layoutpars = window.getAttributes();
+                            layoutpars.screenBrightness = brightness / (float) 255;
+                            window.setAttributes(layoutpars);
+                        } else if (intRight) {
+                            // Tap in left increases/decreases volume
+                            // Show volume text
+                            vol_center_text.setVisibility(View.VISIBLE);
+                            // Get current volume
+                            mediavolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC);
+                            // Get max volume
+                            int maxVol  = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC);
+                            double cal  = (double) diffY * ((double)maxVol/(double)(device_height * 4));
+                            // Get new volume
+                            int newMediaVolume = mediavolume - (int) cal;
+                            // Set volume in bounds
+                            if (newMediaVolume > maxVol) {
+                                newMediaVolume = maxVol;
+                            } else if (newMediaVolume < 1) {
+                                newMediaVolume = 0;
+                            }
+                            // Set new volume
+                            audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, newMediaVolume, AudioManager.FLAG_REMOVE_SOUND_AND_VIBRATE);
+                            // Calculate volume to show to the screen
+                            double volPerc = Math.ceil((((double) newMediaVolume / (double) maxVol) * (double) 100));
+                            // Set volume on the screen
+                            vol_perc_center_text.setText(" " + (int) volPerc);
+                            // Volume was muted, show appropiate icons
+                            if (volPerc < 1) {
+                                volIcon.setImageResource(R.drawable.hplib_volume_mute);
+                                vol_image.setImageResource(R.drawable.hplib_volume_mute);
+                                vol_perc_center_text.setVisibility(View.GONE);
+                            } else if (volPerc >= 1) {
+                                // There is volume, show appropiate icons
+                                volIcon.setImageResource(R.drawable.hplib_volume);
+                                vol_image.setImageResource(R.drawable.hplib_volume);
+                                vol_perc_center_text.setVisibility(View.VISIBLE);
+                            }
+                            // Show volume bar container
+                            volumeBarContainer.setVisibility(View.VISIBLE);
+                            // Set new progress for the volume container
+                            volumeBar.setProgress((int) volPerc);
+                        }
+                    } else {
+                        // Its horizontal movement
+                    }
+                }
+                break;
+            case MotionEvent.ACTION_CANCEL:
+                // Releases the finger
             case MotionEvent.ACTION_UP:
+                // User removed finger from phone
+                screen_swipe_move = false;
+                tested_ok         = false;
+
+                // Hide volume and brigthness controls
+                brightness_center_text.setVisibility(View.GONE);
+                vol_center_text.setVisibility(View.GONE);
+                brightnessBarContainer.setVisibility(View.GONE);
+                volumeBarContainer.setVisibility(View.GONE);
+
                 showControls();
                 break;
         }
@@ -365,6 +550,19 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
         setContentView(R.layout.activity_video_player);
+
+        // Get the screen size
+        display = getWindowManager().getDefaultDisplay();
+        size    = new Point();
+        display.getSize(size);
+        sWidth  = size.x;
+        sHeight = size.y;
+
+        // Get device size: Gets display metrics that describe the size and density of this display.
+        DisplayMetrics displaymetrics = new DisplayMetrics();
+        getWindowManager().getDefaultDisplay().getMetrics(displaymetrics);
+        device_height = displaymetrics.heightPixels;
+        device_width  = displaymetrics.widthPixels;
 
         //Chromecast
         LinearLayout cast_container = (LinearLayout) findViewById(R.id.cast_container);
@@ -396,8 +594,8 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
         loadingPanel = (RelativeLayout) findViewById(R.id.loadingVPanel);
 
         // Bottom bar (Seek bar)
-        txt_ct = (TextView) findViewById(R.id.txt_currentTime);
-        txt_td = (TextView) findViewById(R.id.txt_totalDuration);
+        txt_ct  = (TextView) findViewById(R.id.txt_currentTime);
+        txt_td  = (TextView) findViewById(R.id.txt_totalDuration);
         seekBar = (SeekBar) findViewById(R.id.seekbar);
         // Changes position of the seekbar
         seekBar.setOnSeekBarChangeListener(new SeekBar.OnSeekBarChangeListener() {
@@ -418,7 +616,7 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
             }
         });
 
-        // Buttons
+        // Control buttons
         btn_back  = (ImageButton) findViewById(R.id.btn_back);
         btn_play  = (ImageButton) findViewById(R.id.btn_play);
         btn_pause = (ImageButton) findViewById(R.id.btn_pause);
@@ -427,10 +625,27 @@ public class VideoPlayer extends AppCompatActivity implements HlsSampleSource.Ev
         btn_prev  = (ImageButton) findViewById(R.id.btn_prev);
         btn_next  = (ImageButton) findViewById(R.id.btn_next);
 
+        // Lock/Unlock button
         btn_lock = (ImageButton) findViewById(R.id.btn_lock);
         btn_unlock = (ImageButton) findViewById(R.id.btn_unlock);
 
+        // Settings button
         btn_settings = (ImageButton) findViewById(R.id.btn_settings);
+
+        // Volume and brigthness button
+        vol_perc_center_text       = (TextView) findViewById(R.id.vol_perc_center_text);
+        brigtness_perc_center_text = (TextView) findViewById(R.id.brigtness_perc_center_text);
+        volumeBar                  = (ProgressBar) findViewById(R.id.volume_slider);
+        brightnessBar              = (ProgressBar) findViewById(R.id.brightness_slider);
+        volumeBarContainer         = (LinearLayout) findViewById(R.id.volume_slider_container);
+        brightnessBarContainer     = (LinearLayout) findViewById(R.id.brightness_slider_container);
+        brightness_center_text     = (LinearLayout) findViewById(R.id.brightness_center_text);
+        vol_center_text            = (LinearLayout) findViewById(R.id.vol_center_text);
+        volIcon                    = (ImageView) findViewById(R.id.volIcon);
+        brightnessIcon             = (ImageView) findViewById(R.id.brightnessIcon);
+        vol_image                  = (ImageView) findViewById(R.id.vol_image);
+        brightness_image           = (ImageView) findViewById(R.id.brightness_image);
+        audioManager               = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
 
         // Listeners
         btn_back.setOnClickListener(this);
